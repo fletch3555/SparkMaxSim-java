@@ -27,3 +27,4 @@ pluginManagement {
 }
 
 rootProject.name = 'SparkMaxSim'
+group = 'net.thefletcher.frc'
