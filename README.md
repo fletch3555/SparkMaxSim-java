@@ -1,4 +1,4 @@
-[![](https://jitpack.io/v/net.thefletcher/SparkMaxSim.svg)](https://jitpack.io/#net.thefletcher/SparkMaxSim)
+[![](https://jitpack.io/v/net.thefletcher/SparkMaxSim-java.svg)](https://jitpack.io/#net.thefletcher/SparkMaxSim-java)
 
 # SparkMaxSim
 
