@@ -26,5 +26,4 @@ pluginManagement {
     }
 }
 
-rootProject.name = 'SparkMaxSim-java'
-group = 'net.thefletcher.frc'
+rootProject.name = System.getenv("ARTIFACT") ?: 'SparkMaxSim-java'

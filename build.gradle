@@ -1,47 +1,39 @@
 plugins {
-    // Apply the java-library plugin to add support for Java Library
     id 'java-library'
     id 'maven'
     id "edu.wpi.first.GradleRIO" version "2020.1.1"
 }
 
 repositories {
-    // Use jcenter for resolving dependencies.
-    // You can declare any Maven/Ivy/file repository here.
     jcenter()
-
-    //maven {
-    //    url "http://www.revrobotics.com/content/sw/max/sdk/maven/"
-    //}
 }
 
 dependencies {
     implementation wpi.deps.wpilib()
-    //nativeZip wpi.deps.wpilibJni(wpi.platforms.roborio)
-    //nativeDesktopZip wpi.deps.wpilibJni(wpi.platforms.desktop)
-
 
     implementation wpi.deps.vendor.java()
-    //nativeZip wpi.deps.vendor.jni(wpi.platforms.roborio)
-    //nativeDesktopZip wpi.deps.vendor.jni(wpi.platforms.desktop)
-
-    //testImplementation 'junit:junit:4.12'
-
-    // Enable simulation gui support. Must check the box in vscode to enable support
-    // upon debugging
-    //simulation wpi.deps.sim.gui(wpi.platforms.desktop, false)
 }
 
 test {
-    // Use junit platform for unit tests
     useJUnitPlatform()
 }
 
-task sourcesJar(type: Jar, dependsOn: classes) {
-    classifier = 'sources'
-    from sourceSets.main.allSource
+//name = 'SparkMaxSim-java'
+group = System.getenv("GROUP") ?: 'net.thefletcher'
+version = System.getenv("VERSION") ?: "local-SNAPSHOT"
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_1_8
+    targetCompatibility = JavaVersion.VERSION_1_8
+
+    withSourcesJar()
 }
 
-artifacts {
-    archives sourcesJar
+jar {
+    manifest {
+        attributes(
+            'Implementation-Title': project.name,
+            'Implementation-Version': project.version
+        )
+    }
 }
