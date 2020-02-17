@@ -26,5 +26,5 @@ pluginManagement {
     }
 }
 
-rootProject.name = 'SparkMaxSim'
+rootProject.name = 'SparkMaxSim-java'
 group = 'net.thefletcher.frc'
