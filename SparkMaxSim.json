@@ -1,0 +1,19 @@
+{
+    "fileName": "SparkMaxSim.json",
+    "name": "Fletch3555_SparkMaxSim",
+    "version": "2022.1.1",
+    "uuid": "8f912734-68e1-4d49-9a52-94575cb68239",
+    "mavenUrls": [
+        "https://jitpack.io"
+    ],
+    "jsonUrl": "https://www.kauailabs.com/dist/frc/2022/navx_frc.json",
+    "javaDependencies": [
+        {
+            "groupId": "net.thefletcher",
+            "artifactId": "SparkMaxSim-java",
+            "version": "2022.1.1"
+        }
+    ],
+    "jniDependencies": [],
+    "cppDependencies": []
+}

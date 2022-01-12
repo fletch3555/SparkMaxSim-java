@@ -1,43 +1,19 @@
-/*
- * Copyright (c) 2018-2019 REV Robotics
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *    this list of conditions and the following disclaimer.
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
- * 3. Neither the name of REV Robotics nor the names of its
- *    contributors may be used to endorse or promote products derived from
- *    this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
- */
-
 package net.thefletcher.revrobotics;
 
+import com.revrobotics.REVLibError;
 import com.revrobotics.jni.CANSparkMaxJNI;
 
 import edu.wpi.first.hal.*;
+import edu.wpi.first.hal.SimDevice.Direction;
 import edu.wpi.first.wpilibj.SpeedController;
+import edu.wpi.first.wpilibj.motorcontrol.MotorController;
 
 import java.nio.ByteBuffer;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import net.thefletcher.revrobotics.enums.*;
 
-public abstract class CANSparkMaxLowLevel implements SpeedController {
+public abstract class CANSparkMaxLowLevel implements SpeedController, MotorController, AutoCloseable {
 	public static final int kAPIMajorVersion = CANSparkMaxJNI.c_SparkMax_GetAPIMajorRevision();
 	public static final int kAPIMinorVersion = CANSparkMaxJNI.c_SparkMax_GetAPIMinorRevision();
 	public static final int kAPIBuildVersion = CANSparkMaxJNI.c_SparkMax_GetAPIBuildRevision();
@@ -65,9 +41,12 @@ public abstract class CANSparkMaxLowLevel implements SpeedController {
 		public double sensorPosition;
 		public double iAccum;
 	}
+	
+	protected final AtomicBoolean isClosed = new AtomicBoolean(false);
 
 	protected SimDevice m_simDevice;
 	protected SimEnum m_simMotorType;
+	protected MotorType motorType;
 	protected SimBoolean m_simIsFollower;
 	protected SimDouble m_simOutputValue;
 	protected SimEnum m_simControlType;
@@ -82,12 +61,16 @@ public abstract class CANSparkMaxLowLevel implements SpeedController {
 	 *                 Black terminals only.
 	 */
 	public CANSparkMaxLowLevel(int deviceID, MotorType type) {
+		if (type == null) {
+			throw new IllegalArgumentException("type must not be null");
+		}
+
 		m_simDevice = SimDevice.create("CANSparkMax", deviceID);
 		if (m_simDevice != null) {
-			m_simMotorType = m_simDevice.createEnum("Motor Type", true, new String[] { "Brushed", "Brushless" }, type.value);
-			m_simIsFollower = m_simDevice.createBoolean("Follower", true, false);
-			m_simOutputValue = m_simDevice.createDouble("Output", true, 0.0);
-			m_simControlType = m_simDevice.createEnum("Control Type", true, new String[] { "DutyCycle", "Velocity", "Voltage", "Position", "SmartMotion", "Current", "SmartVelocity" }, 0);
+			m_simMotorType = m_simDevice.createEnum("Motor Type", Direction.kOutput, new String[] { "Brushed", "Brushless" }, type.value);
+			m_simIsFollower = m_simDevice.createBoolean("Follower", Direction.kOutput, false);
+			m_simOutputValue = m_simDevice.createDouble("Output", Direction.kOutput, 0.0);
+			m_simControlType = m_simDevice.createEnum("Control Type", Direction.kOutput, new String[] { "DutyCycle", "Velocity", "Voltage", "Position", "SmartMotion", "Current", "SmartVelocity" }, 0);
 		}
 
 		m_deviceID = deviceID;
@@ -97,7 +80,26 @@ public abstract class CANSparkMaxLowLevel implements SpeedController {
 		if (m_simDevice != null) {
 			m_sparkMax = -1;
 		} else {
+			if (CANSparkMaxJNI.c_SparkMax_RegisterId(deviceID) == REVLibError.kDuplicateCANId.value) {
+				throw new IllegalStateException("A CANSparkMax instance has already been created with this device ID: " + deviceID);
+			}
 			m_sparkMax = CANSparkMaxJNI.c_SparkMax_Create(deviceID, type.value);
+		}
+
+	}
+
+	/** Closes the SPARK MAX Controller */
+	@Override
+	public void close() {
+		boolean alreadyClosed = isClosed.getAndSet(true);
+		if (alreadyClosed) {
+			return;
+		}
+		
+		if (m_simDevice != null) {
+			m_sparkMax = -1;
+		} else {
+			CANSparkMaxJNI.c_SparkMax_Destroy(m_sparkMax);
 		}
 	}
 
@@ -109,6 +111,7 @@ public abstract class CANSparkMaxLowLevel implements SpeedController {
 	 *
 	 */
 	public int getFirmwareVersion() {
+		throwIfClosed();
 		if (m_simDevice != null) {
 			return -1;
 		} else {
@@ -125,6 +128,7 @@ public abstract class CANSparkMaxLowLevel implements SpeedController {
 	 * 
 	 */
 	public void setControlFramePeriodMs(int periodMs) {
+		throwIfClosed();
 		if (m_simDevice != null) {
 			// TODO: fix no-op?
 		} else {
@@ -139,18 +143,24 @@ public abstract class CANSparkMaxLowLevel implements SpeedController {
 	 *
 	 */
 	public String getFirmwareString() {
+		throwIfClosed();
 		if (m_firmwareString == "") {
 			int version = getFirmwareVersion();
 			ByteBuffer b = ByteBuffer.allocate(4);
 			b.putInt(version);
-
+	  
 			byte[] verBytes = b.array();
-
+	  
 			StringBuilder firmwareString = new StringBuilder();
-			firmwareString.append("v").append((int) verBytes[0]).append(".").append((int) verBytes[1]).append(".")
-					.append((int) verBytes[2] << 8 | (int) verBytes[3]);
-
-			m_firmwareString = firmwareString.toString();
+			firmwareString
+				.append("v")
+				.append((int) verBytes[0])
+				.append(".")
+				.append((int) verBytes[1])
+				.append(".")
+				.append((int) verBytes[2] << 8 | (int) verBytes[3]);
+	  
+			this.m_firmwareString = firmwareString.toString();
 		}
 		return m_firmwareString;
 	}
@@ -162,6 +172,7 @@ public abstract class CANSparkMaxLowLevel implements SpeedController {
 	 *
 	 */
 	public byte[] getSerialNumber() {
+		throwIfClosed();
 		return new byte[0];
 	}
 
@@ -172,6 +183,7 @@ public abstract class CANSparkMaxLowLevel implements SpeedController {
 	 *
 	 */
 	public int getDeviceId() {
+		throwIfClosed();
 		return m_deviceID;
 	}
 
@@ -185,32 +197,8 @@ public abstract class CANSparkMaxLowLevel implements SpeedController {
 	 * @return MotorType Motor type setting
 	 */
 	public MotorType getInitialMotorType() {
+		throwIfClosed();
 		return m_motorType;
-	}
-
-	/**
-	 * Set the motor type connected to the SPARK MAX.
-	 *
-	 * This uses the Set Parameter API and should be used infrequently. The
-	 * parameter does not presist unless burnFlash() is called. The recommended
-	 * method to configure this parameter is to use the SPARK MAX GUI to tune and
-	 * save parameters.
-	 *
-	 * @param type The type of motor connected to the controller. Brushless motors
-	 *             must be connected to their matching color and the hall sensor
-	 *             plugged in. Brushed motors must be connected to the Red and Black
-	 *             terminals only.
-	 *
-	 * @return CANError Set to CANError::kOk if successful
-	 *
-	 */
-	public CANError setMotorType(MotorType type) {
-		if (m_simDevice != null) {
-			m_simMotorType.set(type.value);
-			return CANError.kOk;
-		} else {
-			return CANError.fromInt(CANSparkMaxJNI.c_SparkMax_SetMotorType(m_sparkMax, type.value));
-		}
 	}
 
 	/**
@@ -225,6 +213,7 @@ public abstract class CANSparkMaxLowLevel implements SpeedController {
 	 *
 	 */
 	public MotorType getMotorType() {
+		throwIfClosed();
 		if (m_simDevice != null) {
 			return MotorType.fromId(m_simMotorType.get());
 		} else {
@@ -249,16 +238,17 @@ public abstract class CANSparkMaxLowLevel implements SpeedController {
 	 * @param frameID  The frame ID can be one of PeriodicFrame type
 	 * @param periodMs The rate the controller sends the frame to the controller.
 	 *
-	 * @return CANError Set to CANError.kOK if successful
+	 * @return REVLibError Set to REVLibError.kOK if successful
 	 *
 	 */
-	public CANError setPeriodicFramePeriod(PeriodicFrame frameID, int periodMs) {
+	public REVLibError setPeriodicFramePeriod(PeriodicFrame frameID, int periodMs) {
+		throwIfClosed();
 		if (m_simDevice != null) {
 			// TODO: fix no-op?
-			return CANError.kOk;
+			return REVLibError.kOk;
 		} else {
-			return CANError
-					.fromInt(CANSparkMaxJNI.c_SparkMax_SetPeriodicFramePeriod(m_sparkMax, frameID.value, periodMs));
+			return REVLibError.fromInt(
+				CANSparkMaxJNI.c_SparkMax_SetPeriodicFramePeriod(m_sparkMax, frameID.value, periodMs));
 		}
 	}
 
@@ -297,84 +287,65 @@ public abstract class CANSparkMaxLowLevel implements SpeedController {
 		CANSparkMaxJNI.c_SparkMax_SetEnable(enable);
 	}
 
-	CANError setFollow(FollowConfig follower) {
+	REVLibError setFollow(FollowConfig follower) {
+		throwIfClosed();
 		if (m_simDevice != null) {
 			m_simIsFollower.set(true);
-			return CANError.kOk;
+			return REVLibError.kOk;
 		} else {
-			return CANError.fromInt(
-					CANSparkMaxJNI.c_SparkMax_SetFollow(m_sparkMax, follower.leaderArbId, follower.config.getRaw()));
+			return REVLibError.fromInt(
+				CANSparkMaxJNI.c_SparkMax_SetFollow(m_sparkMax, follower.leaderArbId, follower.config.getRaw()));
 		}
 	}
 
-	CANError setpointCommand(double value) {
+	REVLibError setpointCommand(double value) {
+		throwIfClosed();
 		return setpointCommand(value, ControlType.kDutyCycle);
 	}
 
-	CANError setpointCommand(double value, ControlType ctrl) {
+	REVLibError setpointCommand(double value, ControlType ctrl) {
+		throwIfClosed();
 		return setpointCommand(value, ctrl, 0);
 	}
 
-	CANError setpointCommand(double value, ControlType ctrl, int pidSlot) {
+	REVLibError setpointCommand(double value, ControlType ctrl, int pidSlot) {
+		throwIfClosed();
 		return setpointCommand(value, ctrl, pidSlot, 0);
 	}
 
-	CANError setpointCommand(double value, ControlType ctrl, int pidSlot, double arbFeedforward) {
+	REVLibError setpointCommand(double value, ControlType ctrl, int pidSlot, double arbFeedforward) {
+		throwIfClosed();
 		return setpointCommand(value, ctrl, pidSlot, arbFeedforward, 0);
 	}
 
-	CANError setpointCommand(double value, ControlType ctrl, int pidSlot, double arbFeedforward, int arbFFUnits) {
+	REVLibError setpointCommand(double value, ControlType ctrl, int pidSlot, double arbFeedforward, int arbFFUnits) {
+		throwIfClosed();
 		if (m_simDevice != null) {
 			m_simOutputValue.set(value);
 			m_simControlType.set(ctrl.value);
-			return CANError.kOk;
+			return REVLibError.kOk;
 		} else {
-			return CANError.fromInt(CANSparkMaxJNI.c_SparkMax_SetpointCommand(m_sparkMax, (float) value, ctrl.value,
+			return REVLibError.fromInt(CANSparkMaxJNI.c_SparkMax_SetpointCommand(m_sparkMax, (float) value, ctrl.value,
 					pidSlot, (float) arbFeedforward, arbFFUnits));
 		}
 	}
 
 	public float getSafeFloat(float f) {
+		throwIfClosed();
 		if (Float.isNaN(f) || Float.isInfinite(f))
 			return 0;
 
 		return f;
 	}
 
-	protected CANError setEncPosition(double value) {
-		if (m_simDevice != null) {
-			// TODO: fix no-op?
-			return CANError.kOk;
-		} else {
-			return CANError.fromInt(CANSparkMaxJNI.c_SparkMax_SetEncoderPosition(m_sparkMax, (float) value));
-		}
-	}
-
-	protected CANError setAltEncPosition(double value) {
-		if (m_simDevice != null) {
-			// TODO: fix no-op?
-			return CANError.kOk;
-		} else {
-			return CANError.fromInt(CANSparkMaxJNI.c_SparkMax_SetAltEncoderPosition(m_sparkMax, (float) value));
-		}
-	}
-
-	protected CANError setIAccum(double value) {
-		if (m_simDevice != null) {
-			// TODO: fix no-op?
-			return CANError.kOk;
-		} else {
-			return CANError.fromInt(CANSparkMaxJNI.c_SparkMax_SetIAccum(m_sparkMax, (float) value));
-		}
-	}
-
 	/**
 	 * Restore motor controller parameters to factory default until the next
 	 * controller reboot
 	 *
-	 * @return CANError Set to CANError::kOk if successful
+	 * @return REVLibError Set to REVLibError::kOk if successful
 	 */
-	public CANError restoreFactoryDefaults() {
+	public REVLibError restoreFactoryDefaults() {
+		throwIfClosed();
 		return restoreFactoryDefaults(false);
 	}
 
@@ -383,15 +354,22 @@ public abstract class CANSparkMaxLowLevel implements SpeedController {
 	 *
 	 * @param persist If true, burn the flash with the factory default parameters
 	 *
-	 * @return CANError Set to CANError::kOk if successful
+	 * @return REVLibError Set to REVLibError::kOk if successful
 	 */
-	public CANError restoreFactoryDefaults(boolean persist) {
+	public REVLibError restoreFactoryDefaults(boolean persist) {
+		throwIfClosed();
 		if (m_simDevice != null) {
 			// TODO: fix no-op?
-			return CANError.kOk;
+			return REVLibError.kOk;
 		} else {
-			return CANError.fromInt(CANSparkMaxJNI.c_SparkMax_RestoreFactoryDefaults(m_sparkMax, persist));
+			return REVLibError.fromInt(CANSparkMaxJNI.c_SparkMax_RestoreFactoryDefaults(m_sparkMax, persist));
 		}
+	}
+
+	protected void throwIfClosed() {
+	  if (isClosed.get()) {
+		throw new IllegalStateException("This SPARK MAX object has previously been closed.");
+	  }
 	}
 
 	protected static class FollowConfig {

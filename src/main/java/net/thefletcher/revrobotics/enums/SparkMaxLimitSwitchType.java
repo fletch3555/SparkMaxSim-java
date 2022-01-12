@@ -1,12 +1,13 @@
 package net.thefletcher.revrobotics.enums;
 
-public enum ArbFFUnits {
-  kVoltage(0), kPercentOut(1);
+public enum SparkMaxLimitSwitchType {
+  kNormallyOpen(0),
+  kNormallyClosed(1);
 
   @SuppressWarnings("MemberName")
   public final int value;
 
-  ArbFFUnits(int value) {
+  SparkMaxLimitSwitchType(int value) {
     this.value = value;
   }
 }

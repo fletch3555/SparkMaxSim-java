@@ -1,42 +1,33 @@
-/*
- * Copyright (c) 2018-2019 REV Robotics
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *    this list of conditions and the following disclaimer.
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
- * 3. Neither the name of REV Robotics nor the names of its
- *    contributors may be used to endorse or promote products derived from
- *    this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
- */
-
 package net.thefletcher.revrobotics;
 
+import com.revrobotics.REVLibError;
+import com.revrobotics.RelativeEncoder;
 import com.revrobotics.jni.CANSparkMaxJNI;
 import edu.wpi.first.hal.*;
-import edu.wpi.first.wpilibj.Sendable;
+import edu.wpi.first.hal.SimDevice.Direction;
+import edu.wpi.first.util.sendable.*;
 import edu.wpi.first.wpilibj.shuffleboard.BuiltInWidgets;
-import edu.wpi.first.wpilibj.smartdashboard.SendableBuilder;
-import edu.wpi.first.wpilibj.smartdashboard.SendableRegistry;
 import net.thefletcher.revrobotics.enums.*;
 
-public class CANSparkMax extends CANSparkMaxLowLevel implements Sendable, AutoCloseable {
+public class CANSparkMax extends CANSparkMaxLowLevel implements Sendable {
+
+	private SparkMaxRelativeEncoder encoder;
+	private final Object encoderLock = new Object();
+  
+	private SparkMaxAlternateEncoder altEncoder;
+	private final Object altEncoderLock = new Object();
+  
+	private SparkMaxAnalogSensor analogSensor;
+	private final Object analogSensorLock = new Object();
+  
+	private SparkMaxPIDController pidController;
+	private final Object pidControllerLock = new Object();
+  
+	private SparkMaxLimitSwitch forwardLimitSwitch;
+	private final Object forwardLimitSwitchLock = new Object();
+  
+	private SparkMaxLimitSwitch reverseLimitSwitch;
+	private final Object reverseLimitSwitchLock = new Object();
 
 	protected SimBoolean m_simInverted;
 	protected SimEnum m_simIdleMode;
@@ -50,8 +41,10 @@ public class CANSparkMax extends CANSparkMaxLowLevel implements Sendable, AutoCl
 
 	boolean m_altEncInitialized = false;
 	boolean m_limitSwitchInitialized = false;
-	
 
+	// Only used for get() and set() API
+	private double m_setpoint = 0.0;
+	
 	/**
 	 * Create a new SPARK MAX Controller
 	 *
@@ -65,21 +58,21 @@ public class CANSparkMax extends CANSparkMaxLowLevel implements Sendable, AutoCl
 		super(deviceID, type);
 
         if (m_simDevice != null) {
-            m_simInverted = m_simDevice.createBoolean("Inverted", false, false);
-            m_simIdleMode = m_simDevice.createEnum("Idle Mode", false, new String[] {"Coast", "Brake"}, 0);
-			m_simVoltageCompentsationEnabled = m_simDevice.createBoolean("Voltage Compensation Enabled", false, false);
-			m_simOpenLoopRampRate = m_simDevice.createDouble("Open Loop Ramp Rate", true, 1.0);
-			m_simClosedLoopRampRate = m_simDevice.createDouble("Closed Loop Ramp Rate", true, 1.0);
-			m_simSoftLimitFwd = m_simDevice.createDouble("Fwd Soft Limit", false, 0.0);
-            m_simSoftLimitFwdEnabled = m_simDevice.createBoolean("Fwd Soft Limit Enabled", false, false);
-            m_simSoftLimitRev = m_simDevice.createDouble("Rev Soft Limit", false, 0.0);
-            m_simSoftLimitRevEnabled = m_simDevice.createBoolean("Rev Soft Limit Enabled", false, false);
+            m_simInverted = m_simDevice.createBoolean("Inverted", Direction.kOutput, false);
+            m_simIdleMode = m_simDevice.createEnum("Idle Mode", Direction.kOutput, new String[] {"Coast", "Brake"}, 0);
+			m_simVoltageCompentsationEnabled = m_simDevice.createBoolean("Voltage Compensation Enabled", Direction.kOutput, false);
+			m_simOpenLoopRampRate = m_simDevice.createDouble("Open Loop Ramp Rate", Direction.kOutput, 1.0);
+			m_simClosedLoopRampRate = m_simDevice.createDouble("Closed Loop Ramp Rate", Direction.kOutput, 1.0);
+			m_simSoftLimitFwd = m_simDevice.createDouble("Fwd Soft Limit", Direction.kOutput, 0.0);
+            m_simSoftLimitFwdEnabled = m_simDevice.createBoolean("Fwd Soft Limit Enabled", Direction.kOutput, false);
+            m_simSoftLimitRev = m_simDevice.createDouble("Rev Soft Limit", Direction.kOutput, 0.0);
+            m_simSoftLimitRevEnabled = m_simDevice.createBoolean("Rev Soft Limit Enabled", Direction.kOutput, false);
         }
 	}
 
 	@Override
 	public void initSendable(SendableBuilder builder) {
-		builder.setSmartDashboardType(BuiltInWidgets.kSpeedController.getWidgetName());
+		builder.setSmartDashboardType(BuiltInWidgets.kMotorController.getWidgetName());
 		builder.setActuator(true);
 		builder.setSafeState(this::stopMotor);
 		builder.addDoubleProperty("Value", this::get, this::set);
@@ -90,6 +83,7 @@ public class CANSparkMax extends CANSparkMaxLowLevel implements Sendable, AutoCl
 	 */
 	@Override
 	public void close() {
+		super.close();
 		SendableRegistry.remove(this);
 	}
 
@@ -101,6 +95,9 @@ public class CANSparkMax extends CANSparkMaxLowLevel implements Sendable, AutoCl
 	 */
 	@Override
 	public void set(double speed) {
+		throwIfClosed();
+		// Only for 'get' API
+		m_setpoint = speed;
 		setpointCommand(speed, ControlType.kDutyCycle);
 	}
 
@@ -115,6 +112,7 @@ public class CANSparkMax extends CANSparkMaxLowLevel implements Sendable, AutoCl
      */
 	@Override
 	public void setVoltage(double outputVolts) {
+		throwIfClosed();
 		setpointCommand(outputVolts, ControlType.kVoltage);
 	}
 
@@ -125,7 +123,8 @@ public class CANSparkMax extends CANSparkMaxLowLevel implements Sendable, AutoCl
 	 */
 	@Override
 	public double get() {
-		return getAppliedOutput();
+		throwIfClosed();
+		return m_setpoint;
 	}
 
 	/**
@@ -137,6 +136,7 @@ public class CANSparkMax extends CANSparkMaxLowLevel implements Sendable, AutoCl
 	 */
 	@Override
 	public void setInverted(boolean isInverted) {
+		throwIfClosed();
 		if (m_simDevice != null) {
             m_simInverted.set(isInverted);
         }
@@ -154,6 +154,7 @@ public class CANSparkMax extends CANSparkMaxLowLevel implements Sendable, AutoCl
 	 */
 	@Override
 	public boolean getInverted() {
+		throwIfClosed();
         if (m_simDevice != null) {
             return m_simInverted.get();
         }
@@ -168,17 +169,14 @@ public class CANSparkMax extends CANSparkMaxLowLevel implements Sendable, AutoCl
 	 */
 	@Override
 	public void disable() {
+		throwIfClosed();
 		set(0);
 	}
 
 	@Override
 	public void stopMotor() {
+		throwIfClosed();
 		set(0);
-	}
-
-	@Override
-	public void pidWrite(double output) {
-		set(output);
 	}
 
 	/******* Extended Functions *******/
@@ -194,8 +192,9 @@ public class CANSparkMax extends CANSparkMaxLowLevel implements Sendable, AutoCl
 	 * 
 	 * @return An object for interfacing with the integrated encoder.
 	 */
-	public CANEncoder getEncoder() {
-		return getEncoder(EncoderType.kHallSensor, 0);
+	public RelativeEncoder getEncoder() {
+		throwIfClosed();
+		return getEncoder(SparkMaxRelativeEncoderType.kHallSensor, 0);
 	}
 
 	/**
@@ -209,8 +208,28 @@ public class CANSparkMax extends CANSparkMaxLowLevel implements Sendable, AutoCl
 	 * @param counts_per_rev The counts per revolution of the encoder
 	 * @return An object for interfacing with an encoder
 	 */
-	public CANEncoder getEncoder(EncoderType sensorType, int counts_per_rev) {
-		return new CANEncoder(this, sensorType, counts_per_rev);
+	public RelativeEncoder getEncoder(SparkMaxRelativeEncoderType encoderType, int countsPerRev) {
+		throwIfClosed();
+		synchronized (encoderLock) {
+		  if (encoder == null) {
+			encoder = new SparkMaxRelativeEncoder(this, encoderType, countsPerRev);
+		  } else {
+			if (encoder.type != encoderType) {
+			  throw new IllegalStateException(
+				  "The main encoder on this SPARK MAX has already been initialized as a "
+					  + encoder.type);
+			}
+			// Counts per revolution is ignored for the hall sensor encoder type
+			if (encoder.type != SparkMaxRelativeEncoderType.kHallSensor
+				&& encoder.getCountsPerRevolution() != countsPerRev) {
+			  throw new IllegalStateException(
+				  "The main encoder on this SPARK MAX has already been initialized with countsPerRev set to "
+					  + encoder.countsPerRev);
+			}
+			// The user isn't trying to change their encoder settings mid-program, so we're all set
+		  }
+		  return encoder;
+		}
 	}
 
 	/**
@@ -224,8 +243,9 @@ public class CANSparkMax extends CANSparkMaxLowLevel implements Sendable, AutoCl
 	 * @return Returns an object for interfacing with an encoder connected to the alternate 
 	 * data port configured pins
 	 */
-	public CANEncoder getAlternateEncoder() {
-		return new CANEncoder(this, AlternateEncoderType.kQuadrature, 0);
+	public RelativeEncoder getAlternateEncoder(int countsPerRev) {
+		throwIfClosed();
+		return getAlternateEncoder(SparkMaxAlternateEncoderType.kQuadrature, countsPerRev);
 	}
 
 	/**
@@ -242,42 +262,115 @@ public class CANSparkMax extends CANSparkMaxLowLevel implements Sendable, AutoCl
 	 * @return Returns an object for interfacing with an encoder connected to the alternate 
 	 * data port configured pins
 	 */
-	public CANEncoder getAlternateEncoder(AlternateEncoderType sensorType, int counts_per_rev) {
-		return new CANEncoder(this, sensorType, counts_per_rev);
+	public RelativeEncoder getAlternateEncoder(SparkMaxAlternateEncoderType encoderType, int countsPerRev) {
+		throwIfClosed();
+		synchronized (altEncoderLock) {
+		  if (altEncoder == null) {
+			altEncoder = new SparkMaxAlternateEncoder(this, encoderType, countsPerRev);
+		  } else {
+			if (altEncoder.type != encoderType) {
+			  throw new IllegalStateException(
+				  "The alternate encoder on this SPARK MAX has already been initialized as a "
+					  + altEncoder.type);
+			}
+			if (altEncoder.countsPerRev != countsPerRev) {
+			  throw new IllegalStateException(
+				  "The alternate encoder on this SPARK MAX has already been initialized with countsPerRev set to "
+					  + altEncoder.countsPerRev);
+			}
+			// The user isn't trying to change their alternate encoder settings mid-program,
+			// so we're all set
+		  }
+		  return altEncoder;
+		}
 	}
 
 	/**
 	 * @param mode The mode of the analog sensor, either absolute or relative
 	 * @return An object for interfacing with a connected analog sensor.
 	 */
-	public CANAnalog getAnalog(AnalogMode mode) {
-		return new CANAnalog(this, mode);
+	public SparkMaxAnalogSensor getAnalog(SparkMaxAnalogSensorMode mode) {
+		throwIfClosed();
+		synchronized (analogSensorLock) {
+			if (analogSensor == null) {
+				analogSensor = new SparkMaxAnalogSensor(this, mode);
+			} else {
+				if (analogSensor.mode != mode) {
+					throw new IllegalStateException(
+						"The analog sensor connected to this SPARK MAX has already been configured with mode "
+							+ analogSensor.mode);
+				}
+				// The user isn't trying to change their analog sensor settings mid-program,
+				// so we're all set
+			}
+			return analogSensor;
+		}
 	}
 
-	/**
-	 * @return An object for interfacing with the integrated PID controller.
-	 */
-	public CANPIDController getPIDController() {
-		return new CANPIDController(this);
-	}
+  /** @return An object for interfacing with the integrated PID controller. */
+  public SparkMaxPIDController getPIDController() {
+    throwIfClosed();
+    synchronized (pidControllerLock) {
+      if (pidController == null) {
+        pidController = new SparkMaxPIDController(this);
+      }
+      return pidController;
+    }
+  }
 
-	/**
-	 * @return An object for interfacing with the integrated forward limit switch.
-	 *
-	 * @param polarity Whether the limit switch is normally open or normally closed.
-	 */
-	public CANDigitalInput getForwardLimitSwitch(LimitSwitchPolarity polarity) {
-		return new CANDigitalInput(this, LimitSwitch.kForward, polarity);
-	}
+  /**
+   * Returns an object for interfacing with the forward limit switch connected to the appropriate
+   * pins on the data port.
+   *
+   * <p>This call will disable support for the alternate encoder.
+   *
+   * @param switchType Whether the limit switch is normally open or normally closed.
+   * @return An object for interfacing with the forward limit switch.
+   */
+  public SparkMaxLimitSwitch getForwardLimitSwitch(SparkMaxLimitSwitchType switchType) {
+    throwIfClosed();
+    synchronized (forwardLimitSwitchLock) {
+      if (forwardLimitSwitch == null) {
+        forwardLimitSwitch =
+            new SparkMaxLimitSwitch(this, SparkMaxLimitSwitchDirection.kForward, switchType);
+      } else {
+        if (forwardLimitSwitch.m_switchType != switchType) {
+          throw new IllegalStateException(
+              "The forward limit switch on this SPARK MAX has already been configured with the"
+                  + forwardLimitSwitch.m_switchType
+                  + " switch type");
+        }
+      }
+      return forwardLimitSwitch;
+    }
+  }
 
-	/**
-	 * @return An object for interfacing with the integrated reverse limit switch.
-	 *
-	 * @param polarity Whether the limit switch is normally open or normally closed.
-	 */
-	public CANDigitalInput getReverseLimitSwitch(LimitSwitchPolarity polarity) {
-		return new CANDigitalInput(this, LimitSwitch.kReverse, polarity);
-	}
+  /**
+   * Returns an object for interfacing with the reverse limit switch connected to the appropriate
+   * pins on the data port.
+   *
+   * <p>This call will disable support for the alternate encoder.
+   *
+   * @param switchType Whether the limit switch is normally open or normally closed.
+   * @return An object for interfacing with the reverse limit switch.
+   */
+  public SparkMaxLimitSwitch getReverseLimitSwitch(SparkMaxLimitSwitchType switchType) {
+    throwIfClosed();
+    synchronized (reverseLimitSwitchLock) {
+      if (reverseLimitSwitch == null) {
+        reverseLimitSwitch =
+            new SparkMaxLimitSwitch(this, SparkMaxLimitSwitchDirection.kReverse, switchType);
+      } else {
+        if (reverseLimitSwitch.m_switchType != switchType) {
+          throw new IllegalStateException(
+              "The reverse limit switch on this SPARK MAX has already been configured with the "
+                  + reverseLimitSwitch.m_switchType
+                  + " switch type");
+        }
+      }
+      return reverseLimitSwitch;
+    }
+  }
 
 	/**
 	 * Sets the current limit in Amps.
@@ -294,10 +387,10 @@ public class CANSparkMax extends CANSparkMaxLowLevel implements Sendable, AutoCl
 	 *
 	 * @param limit The current limit in Amps.
 	 *
-	 * @return CANError Set to CANError.kOK if successful
+	 * @return REVLibError Set to REVLibError.kOK if successful
 	 *
 	 */
-	public CANError setSmartCurrentLimit(int limit) {
+	public REVLibError setSmartCurrentLimit(int limit) {
 		return setSmartCurrentLimit(limit, 0);
 	}
 
@@ -321,9 +414,9 @@ public class CANSparkMax extends CANSparkMaxLowLevel implements Sendable, AutoCl
 	 * @param stallLimit The current limit in Amps at 0 RPM.
 	 * @param freeLimit  The current limit at free speed (5700RPM for NEO).
 	 *
-	 * @return CANError Set to CANError.kOK if successful
+	 * @return REVLibError Set to REVLibError.kOK if successful
 	 */
-	public CANError setSmartCurrentLimit(int stallLimit, int freeLimit) {
+	public REVLibError setSmartCurrentLimit(int stallLimit, int freeLimit) {
 		return setSmartCurrentLimit(stallLimit, freeLimit, 20000);
 	}
 
@@ -350,15 +443,15 @@ public class CANSparkMax extends CANSparkMaxLowLevel implements Sendable, AutoCl
 	 *                   values greater than limitRPM will scale linearly to
 	 *                   freeLimit
 	 *
-	 * @return CANError Set to CANError.kOK if successful
+	 * @return REVLibError Set to REVLibError.kOK if successful
 	 */
-	public CANError setSmartCurrentLimit(int stallLimit, int freeLimit, int limitRPM) {
+	public REVLibError setSmartCurrentLimit(int stallLimit, int freeLimit, int limitRPM) {
 		if (m_simDevice != null) {
 			// TODO: fix no-op?
-            return CANError.kOk;
+            return REVLibError.kOk;
         }
         else {
-			return CANError.fromInt(CANSparkMaxJNI.c_SparkMax_SetSmartCurrentLimit(m_sparkMax, stallLimit, freeLimit, limitRPM));
+			return REVLibError.fromInt(CANSparkMaxJNI.c_SparkMax_SetSmartCurrentLimit(m_sparkMax, stallLimit, freeLimit, limitRPM));
 		}
 	}
 
@@ -387,9 +480,9 @@ public class CANSparkMax extends CANSparkMaxLowLevel implements Sendable, AutoCl
 	 *
 	 * @param limit The current limit in Amps.
 	 *
-	 * @return CANError Set to CANError.kOK if successful
+	 * @return REVLibError Set to REVLibError.kOK if successful
 	 */
-	public CANError setSecondaryCurrentLimit(double limit) {
+	public REVLibError setSecondaryCurrentLimit(double limit) {
 		return setSecondaryCurrentLimit(limit, 0);
 	}
 
@@ -420,15 +513,15 @@ public class CANSparkMax extends CANSparkMaxLowLevel implements Sendable, AutoCl
 	 * @param chopCycles The number of additional PWM cycles to turn the driver off
 	 *                   after overcurrent is detected.
 	 *
-	 * @return CANError Set to CANError.kOK if successful
+	 * @return REVLibError Set to REVLibError.kOK if successful
 	 */
-	public CANError setSecondaryCurrentLimit(double limit, int chopCycles) {
+	public REVLibError setSecondaryCurrentLimit(double limit, int chopCycles) {
 		if (m_simDevice != null) {
 			// TODO: fix no-op?
-            return CANError.kOk;
+            return REVLibError.kOk;
         }
         else {
-			return CANError.fromInt(CANSparkMaxJNI.c_SparkMax_SetSecondaryCurrentLimit(m_sparkMax, (float)limit, chopCycles));
+			return REVLibError.fromInt(CANSparkMaxJNI.c_SparkMax_SetSecondaryCurrentLimit(m_sparkMax, (float)limit, chopCycles));
 		}
 	}
 
@@ -437,15 +530,15 @@ public class CANSparkMax extends CANSparkMaxLowLevel implements Sendable, AutoCl
 	 *
 	 * @param mode Idle mode (coast or brake).
 	 *
-	 * @return CANError Set to CANError.kOK if successful
+	 * @return REVLibError Set to REVLibError.kOK if successful
 	 */
-	public CANError setIdleMode(IdleMode mode) {	
+	public REVLibError setIdleMode(IdleMode mode) {	
         if (m_simDevice != null) {
             m_simIdleMode.set(mode.value);
-            return CANError.kOk;
+            return REVLibError.kOk;
         }
         else {
-			return CANError.fromInt(CANSparkMaxJNI.c_SparkMax_SetIdleMode(m_sparkMax, mode.value));
+			return REVLibError.fromInt(CANSparkMaxJNI.c_SparkMax_SetIdleMode(m_sparkMax, mode.value));
 		}
 	}
 
@@ -474,30 +567,30 @@ public class CANSparkMax extends CANSparkMaxLowLevel implements Sendable, AutoCl
 	 *
 	 * @param nominalVoltage Nominal voltage to compensate output to
 	 *
-	 * @return CANError Set to CANError.kOK if successful
+	 * @return REVLibError Set to REVLibError.kOK if successful
 	 */
-	public CANError enableVoltageCompensation(double nominalVoltage) {
+	public REVLibError enableVoltageCompensation(double nominalVoltage) {
 		if (m_simDevice != null) {
 			m_simVoltageCompentsationEnabled.set(true);
-			return CANError.kOk;
+			return REVLibError.kOk;
 		}
 		else {
-			return CANError.fromInt(CANSparkMaxJNI.c_SparkMax_EnableVoltageCompensation(m_sparkMax, (float)nominalVoltage));
+			return REVLibError.fromInt(CANSparkMaxJNI.c_SparkMax_EnableVoltageCompensation(m_sparkMax, (float)nominalVoltage));
 		}
 	}
 
 	/**
 	 * Disables the voltage compensation setting for all modes on the SPARK MAX.
 	 *
-	 * @return CANError Set to CANError.kOK if successful
+	 * @return REVLibError Set to REVLibError.kOK if successful
 	 */
-	public CANError disableVoltageCompensation() {
+	public REVLibError disableVoltageCompensation() {
 		if (m_simDevice != null) {
 			m_simVoltageCompentsationEnabled.set(false);
-			return CANError.kOk;
+			return REVLibError.kOk;
 		}
 		else {
-			return CANError.fromInt(CANSparkMaxJNI.c_SparkMax_DisableVoltageCompensation(m_sparkMax));
+			return REVLibError.fromInt(CANSparkMaxJNI.c_SparkMax_DisableVoltageCompensation(m_sparkMax));
 		}
 	}
 
@@ -524,15 +617,15 @@ public class CANSparkMax extends CANSparkMaxLowLevel implements Sendable, AutoCl
 	 *
 	 * @param rate Time in seconds to go from 0 to full throttle.
 	 *
-	 * @return CANError Set to CANError.kOK if successful
+	 * @return REVLibError Set to REVLibError.kOK if successful
 	 */
-	public CANError setOpenLoopRampRate(double rate) {
+	public REVLibError setOpenLoopRampRate(double rate) {
 		if (m_simDevice != null) {
 			m_simOpenLoopRampRate.set(rate);
-			return CANError.kOk;
+			return REVLibError.kOk;
 		}
 		else {
-			return CANError.fromInt(CANSparkMaxJNI.c_SparkMax_SetOpenLoopRampRate(m_sparkMax, (float)rate));
+			return REVLibError.fromInt(CANSparkMaxJNI.c_SparkMax_SetOpenLoopRampRate(m_sparkMax, (float)rate));
 		}
 	}
 
@@ -544,15 +637,15 @@ public class CANSparkMax extends CANSparkMaxLowLevel implements Sendable, AutoCl
 	 *
 	 * @param rate Time in seconds to go from 0 to full throttle.
 	 *
-	 * @return CANError Set to CANError.kOK if successful
+	 * @return REVLibError Set to REVLibError.kOK if successful
 	 */
-	public CANError setClosedLoopRampRate(double rate) {
+	public REVLibError setClosedLoopRampRate(double rate) {
 		if (m_simDevice != null) {
 			m_simClosedLoopRampRate.set(rate);
-			return CANError.kOk;
+			return REVLibError.kOk;
 		}
 		else {
-			return CANError.fromInt(CANSparkMaxJNI.c_SparkMax_SetClosedLoopRampRate(m_sparkMax, (float)rate));
+			return REVLibError.fromInt(CANSparkMaxJNI.c_SparkMax_SetClosedLoopRampRate(m_sparkMax, (float)rate));
 		}
 	}
 
@@ -603,9 +696,9 @@ public class CANSparkMax extends CANSparkMaxLowLevel implements Sendable, AutoCl
 	 *
 	 * @param leader The motor controller to follow.
 	 *
-	 * @return CANError Set to CANError.kOK if successful
+	 * @return REVLibError Set to REVLibError.kOK if successful
 	 */
-	public CANError follow(final CANSparkMax leader) {
+	public REVLibError follow(final CANSparkMax leader) {
 		return follow(leader, false);
 	}
 
@@ -620,9 +713,9 @@ public class CANSparkMax extends CANSparkMaxLowLevel implements Sendable, AutoCl
 	 * @param leader The motor controller to follow.
 	 * @param invert Set the follower to output opposite of the leader
 	 *
-	 * @return CANError Set to CANError.kOK if successful
+	 * @return REVLibError Set to REVLibError.kOK if successful
 	 */
-	public CANError follow(final CANSparkMax leader, boolean invert) {
+	public REVLibError follow(final CANSparkMax leader, boolean invert) {
 		return follow(ExternalFollower.kFollowerSparkMax, leader.getDeviceId(), invert);
 	}
 
@@ -641,9 +734,9 @@ public class CANSparkMax extends CANSparkMaxLowLevel implements Sendable, AutoCl
 	 *                 etc.).
 	 * @param deviceID The CAN ID of the device to follow.
 	 *
-	 * @return CANError Set to CANError.kOK if successful
+	 * @return REVLibError Set to REVLibError.kOK if successful
 	 */
-	public CANError follow(ExternalFollower leader, int deviceID) {
+	public REVLibError follow(ExternalFollower leader, int deviceID) {
 		boolean inverted = getInverted();
 		return follow(leader, deviceID, inverted);
 	}
@@ -662,9 +755,9 @@ public class CANSparkMax extends CANSparkMaxLowLevel implements Sendable, AutoCl
 	 *
 	 * @param invert   Set the follower to output opposite of the leader
 	 *
-	 * @return CANError Set to CANError.kOK if successful
+	 * @return REVLibError Set to REVLibError.kOK if successful
 	 */
-	public CANError follow(ExternalFollower leader, int deviceID, boolean invert) {
+	public REVLibError follow(ExternalFollower leader, int deviceID, boolean invert) {
 		FollowConfig maxFollower = new FollowConfig();
 		maxFollower.leaderArbId = (leader.arbId == 0 ? 0 : leader.arbId | deviceID);
 		maxFollower.config.predefined = leader.configId;
@@ -713,23 +806,33 @@ public class CANSparkMax extends CANSparkMaxLowLevel implements Sendable, AutoCl
 	/**
 	 * Get the value of a specific fault
 	 *
-	 * @param faultType The type of the fault to retrive
+	 * @param faultID The type of the fault to retrive
 	 *
 	 * @return True if the fault with the given type occurred.
 	 */
-	public boolean getFault(FaultType faultType) {
-		return CANSparkMaxJNI.c_SparkMax_GetFault(m_sparkMax, faultType.value);
+	public boolean getFault(FaultID faultID) {
+		if (m_simDevice != null) {
+			return false;
+		}
+		else {
+			return CANSparkMaxJNI.c_SparkMax_GetFault(m_sparkMax, faultID.value);
+		}
 	}
 
 	/**
 	 * Get the value of a specific sticky fault
 	 *
-	 * @param faultType The type of the sticky fault to retrive
+	 * @param faultID The type of the sticky fault to retrive
 	 *
 	 * @return True if the sticky fault with the given type occurred.
 	 */
-	public boolean getStickyFault(FaultType faultType) {
-		return CANSparkMaxJNI.c_SparkMax_GetStickyFault(m_sparkMax, faultType.value);
+	public boolean getStickyFault(FaultID faultID) {
+		if (m_simDevice != null) {
+			return false;
+		}
+		else {
+			return CANSparkMaxJNI.c_SparkMax_GetStickyFault(m_sparkMax, faultID.value);
+		}
 	}
 
 	/**
@@ -783,28 +886,28 @@ public class CANSparkMax extends CANSparkMaxLowLevel implements Sendable, AutoCl
 	/**
 	 * Clears all sticky faults.
 	 *
-	 * @return CANError Set to CANError.kOK if successful
+	 * @return REVLibError Set to REVLibError.kOK if successful
 	 */
-	public CANError clearFaults() {
+	public REVLibError clearFaults() {
 		if (m_simDevice != null) {
-			return CANError.kOk;
+			return REVLibError.kOk;
 		}
 		else {
-			return CANError.fromInt(CANSparkMaxJNI.c_SparkMax_ClearFaults(m_sparkMax));
+			return REVLibError.fromInt(CANSparkMaxJNI.c_SparkMax_ClearFaults(m_sparkMax));
 		}
 	}
 
 	/**
 	 * Writes all settings to flash.
 	 *
-	 * @return CANError Set to CANError.kOK if successful
+	 * @return REVLibError Set to REVLibError.kOK if successful
 	 */
-	public CANError burnFlash() {
+	public REVLibError burnFlash() {
 		if (m_simDevice != null) {
-			return CANError.kOk;
+			return REVLibError.kOk;
 		}
 		else {
-			return CANError.fromInt(CANSparkMaxJNI.c_SparkMax_BurnFlash(m_sparkMax));
+			return REVLibError.fromInt(CANSparkMaxJNI.c_SparkMax_BurnFlash(m_sparkMax));
 		}
 	}
 
@@ -818,14 +921,14 @@ public class CANSparkMax extends CANSparkMaxLowLevel implements Sendable, AutoCl
 	 *
 	 * @param milliseconds The timeout in milliseconds.
 	 *
-	 * @return CANError Set to CANError.kOK if successful
+	 * @return REVLibError Set to REVLibError.kOK if successful
 	 */
-	public CANError setCANTimeout(int milliseconds) {
+	public REVLibError setCANTimeout(int milliseconds) {
 		if (m_simDevice != null) {
-			return CANError.kOk;
+			return REVLibError.kOk;
 		}
 		else {
-			return CANError.fromInt(CANSparkMaxJNI.c_SparkMax_SetCANTimeout(m_sparkMax, milliseconds));
+			return REVLibError.fromInt(CANSparkMaxJNI.c_SparkMax_SetCANTimeout(m_sparkMax, milliseconds));
 		}
 	}
 
@@ -836,9 +939,9 @@ public class CANSparkMax extends CANSparkMaxLowLevel implements Sendable, AutoCl
      * 
      * @param enable set true to enable soft limits
 	 * 
-	 * @return CANError Set to CANError.kOK if successful
+	 * @return REVLibError Set to REVLibError.kOK if successful
      */
-	public CANError enableSoftLimit(SoftLimitDirection direction, boolean enable) {
+	public REVLibError enableSoftLimit(SoftLimitDirection direction, boolean enable) {
 		if (m_simDevice != null) {
             switch (direction) {
                 case kForward:
@@ -848,12 +951,12 @@ public class CANSparkMax extends CANSparkMaxLowLevel implements Sendable, AutoCl
                     m_simSoftLimitRevEnabled.set(enable);
                     break;
                 default:
-                    return CANError.kInvalid;
+                    return REVLibError.kInvalid;
             }
-            return CANError.kOk;
+            return REVLibError.kOk;
         }
         else {
-			return CANError.fromInt(CANSparkMaxJNI.c_SparkMax_EnableSoftLimit(m_sparkMax, direction.value, enable));
+			return REVLibError.fromInt(CANSparkMaxJNI.c_SparkMax_EnableSoftLimit(m_sparkMax, direction.value, enable));
 		}
 	}
 
@@ -868,9 +971,9 @@ public class CANSparkMax extends CANSparkMaxLowLevel implements Sendable, AutoCl
      * 
      * @param limit position soft limit of the controller
 	 * 
-	 * @return CANError Set to CANError.kOK if successful
+	 * @return REVLibError Set to REVLibError.kOK if successful
      */
-	public CANError setSoftLimit(SoftLimitDirection direction, float limit) {
+	public REVLibError setSoftLimit(SoftLimitDirection direction, float limit) {
 		if (m_simDevice != null) {
             switch (direction) {
                 case kForward:
@@ -880,12 +983,12 @@ public class CANSparkMax extends CANSparkMaxLowLevel implements Sendable, AutoCl
                     m_simSoftLimitRev.set(limit);
                     break;
                 default:
-                    return CANError.kInvalid;
+                    return REVLibError.kInvalid;
             }
-            return CANError.kOk;
+            return REVLibError.kOk;
         }
         else {
-			return CANError.fromInt(CANSparkMaxJNI.c_SparkMax_SetSoftLimit(m_sparkMax, direction.value, limit));
+			return REVLibError.fromInt(CANSparkMaxJNI.c_SparkMax_SetSoftLimit(m_sparkMax, direction.value, limit));
 		}
 	}
 
@@ -955,12 +1058,12 @@ public class CANSparkMax extends CANSparkMaxLowLevel implements Sendable, AutoCl
      * 
      * @return the last error that was generated.
      */
-	public CANError getLastError() {
+	public REVLibError getLastError() {
 		if (m_simDevice != null) {
-            return CANError.kOk;
+            return REVLibError.kOk;
         }
         else {
-			return CANError.fromInt(CANSparkMaxJNI.c_SparkMax_GetLastError(m_sparkMax));
+			return REVLibError.fromInt(CANSparkMaxJNI.c_SparkMax_GetLastError(m_sparkMax));
 		}
 	}
 }

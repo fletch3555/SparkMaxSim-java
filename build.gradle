@@ -1,30 +1,39 @@
 plugins {
     id 'java-library'
-    id 'maven'
-    id "edu.wpi.first.GradleRIO" version "2020.1.1"
+    id 'maven-publish'
 }
 
 repositories {
-    jcenter()
+    mavenCentral()
+    maven {
+        url "https://frcmaven.wpi.edu/artifactory/release/"
+    }
+    maven {
+        url "https://maven.revrobotics.com/"
+    }
 }
 
-dependencies {
-    implementation wpi.deps.wpilib()
+def WPIversion = '2022.1.1'
+def REVversion = '2022.0.0'
 
-    implementation wpi.deps.vendor.java()
+dependencies {
+    implementation "edu.wpi.first.wpilibj:wpilibj-java:$WPIversion"
+    implementation "edu.wpi.first.wpiutil:wpiutil-java:$WPIversion"
+    implementation "edu.wpi.first.hal:hal-java:$WPIversion"
+    implementation "com.revrobotics.frc:REVLib-java:$REVversion"
 }
 
 test {
     useJUnitPlatform()
 }
 
-//name = 'SparkMaxSim-java'
+// name = 'SparkMaxSim-java'
 group = System.getenv("GROUP") ?: 'net.thefletcher'
-version = System.getenv("VERSION") ?: "local-SNAPSHOT"
+version = System.getenv("VERSION") ?: REVversion
 
 java {
-    sourceCompatibility = JavaVersion.VERSION_1_8
-    targetCompatibility = JavaVersion.VERSION_1_8
+    sourceCompatibility = JavaVersion.VERSION_11
+    targetCompatibility = JavaVersion.VERSION_11
 
     withSourcesJar()
 }
@@ -35,5 +44,17 @@ jar {
             'Implementation-Title': project.name,
             'Implementation-Version': project.version
         )
+    }
+}
+
+publishing {
+    publications {
+        maven(MavenPublication) {
+            groupId = group
+            artifactId = project.name
+            version = project.version
+
+            from components.java
+        }
     }
 }

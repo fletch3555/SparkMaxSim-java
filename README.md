@@ -4,7 +4,7 @@
 
 This is a redistribution of the SparkMax-java library provided by [REV Robotics](https://revrobotics.com) for the [FIRST Robotics Competition](https://firstinspires.org/robotics/frc).
 
-This version adds support for the Desktop Simulation features of [WPILib](https://wpilib.org) and also adds support for the Sendable APIs.
+This version adds support for the Desktop Simulation features of [WPILib](https://wpilib.org).
 
 ## Adding the dependency
 
@@ -25,7 +25,7 @@ Now that you've told gradle *how* to find the package, we need to tell it *what*
 ```gradle
 implementation "net.thefletcher:SparkMaxSim-java:RELEASE_TAG"
 ```
-where RELEASE_TAG is the release version listed in your project's `vendordeps/revrobotics.json` file (e.g. 1.5.1).
+where RELEASE_TAG is the release version listed in your project's `vendordeps/revrobotics.json` file (e.g. 2022.1.1).
 
 ## Using SparkMaxSim
 
@@ -37,8 +37,8 @@ For example, to instantiate a CANSparkMax object, you would use `import net.thef
 
 1. I've made a few "housekeeping" changes as well, including moving all of the enum types from inner classes to discrete classes under the `net.thefletcher.revrobotics.enums` package.  They behave identically, so you should have no issue using them, other than having to add/change a few `import` statements.
 1. Due to how REV has built the APIs and how the simulation functionality works, you may run into a few oddities when using this library.
-  1. `CANSparkMax::getEncoder()` will create a `new` CANEncoder object every time it's called.  This breaks the simulation functionality and will lead to console errors and/or unexpected behavior ONLY in simulation mode.
-  1. This applies to `getAlternateEncoder()`, `getAnalog()`, `getPIDController`, `getForwardLimitSwitch()` and `getReverseLimitSwitch()` as well
+  1. ~~`CANSparkMax::getEncoder()` will create a `new` CANEncoder object every time it's called.  This breaks the simulation functionality and will lead to console errors and/or unexpected behavior ONLY in simulation mode.~~ (Resolved in 2022.1.1)
+  1. ~~This applies to `getAlternateEncoder()`, `getAnalog()`, `getPIDController`, `getForwardLimitSwitch()` and `getReverseLimitSwitch()` as well~~ (Resolved in 2022.1.1)
 1. The `Sendable` functionality is very much at the [MVP](https://en.wikipedia.org/wiki/Minimum_viable_product) stage, so it may not show everything properly.  Please send bug reports/feature requests as appropriate.
 1. The sensor objects do not update input values in Sim mode.  If you think about it, this makes perfect sense given that there's no actual hardware to measure.  If someone has a good solution to this, I'd love to hear it.
 
